@@ -9,6 +9,9 @@
  */ 
 
 `include "sr_cpu.vh"
+`define WD_ALU  2'b00
+`define WD_IMMU 2'b01
+`define WD_FUNC 2'b10
 
 module sr_cpu
 (
@@ -21,10 +24,11 @@ module sr_cpu
 );
     //control wires
     wire        aluZero;
+    wire        aluCarry;
     wire        pcSrc;
     wire        regWrite;
     wire        aluSrc;
-    wire        wdSrc;
+    wire  [1:0] wdSrc;
     wire  [2:0] aluControl;
 
     //instruction decode wires
@@ -42,7 +46,10 @@ module sr_cpu
     wire [31:0] pc;
     wire [31:0] pcBranch = pc + immB;
     wire [31:0] pcPlus4  = pc + 4;
-    wire [31:0] pcNext   = pcSrc ? pcBranch : pcPlus4;
+    wire [31:0] pcNext   = func_busy | start_i ? pc : (pcSrc ? pcBranch : pcPlus4);
+    wire [31:0] pcPrev;
+    wire        isPcChanged = pc != pcPrev;
+    sm_register r_pc_prev(clk, rst_n, pc, pcPrev);
     sm_register r_pc(clk ,rst_n, pcNext, pc);
 
     //program memory access
@@ -67,7 +74,7 @@ module sr_cpu
     wire [31:0] rd0;
     wire [31:0] rd1;
     wire [31:0] rd2;
-    wire [31:0] wd3;
+    reg  [31:0] wd3;
 
     sm_register_file rf (
         .clk        ( clk          ),
@@ -88,28 +95,55 @@ module sr_cpu
     //alu
     wire [31:0] srcB = aluSrc ? immI : rd2;
     wire [31:0] aluResult;
+    
+    wire start_i;
+wire func_busy;
+wire [15:0] func_res;
+
+func sr_func(
+    .clk_i(clk),
+    .rst_i(~rst_n),
+    .a(rd1),
+    .b(srcB),
+    .start_i(start_i),
+    .busy_o(func_busy),
+    .y_bo(func_res)
+);
 
     sr_alu alu (
         .srcA       ( rd1          ),
         .srcB       ( srcB         ),
         .oper       ( aluControl   ),
+        .carry      ( aluCarry     ),
         .zero       ( aluZero      ),
         .result     ( aluResult    ) 
     );
 
-    assign wd3 = wdSrc ? immU : aluResult;
+//    assign wd3 = wdSrc ? immU : aluResult;
 
+        always @ (*) begin
+            case(wdSrc)
+                `WD_ALU  : wd3 = aluResult;
+                `WD_IMMU : wd3 = immU;
+                `WD_FUNC : wd3 = {16'b0, func_res};
+                default  : wd3 = aluResult;
+            endcase
+        end
+                    
     //control
     sr_control sm_control (
         .cmdOp      ( cmdOp        ),
         .cmdF3      ( cmdF3        ),
         .cmdF7      ( cmdF7        ),
         .aluZero    ( aluZero      ),
+        .aluCarry   ( aluCarry     ),
         .pcSrc      ( pcSrc        ),
         .regWrite   ( regWrite     ),
         .aluSrc     ( aluSrc       ),
         .wdSrc      ( wdSrc        ),
-        .aluControl ( aluControl   ) 
+        .aluControl ( aluControl   ),
+        .func_start ( start_i      ),
+        .isPcChanged( isPcChanged  )
     );
 
 endmodule
@@ -163,23 +197,31 @@ module sr_control
     input     [ 2:0] cmdF3,
     input     [ 6:0] cmdF7,
     input            aluZero,
+    input            aluCarry,
+    input            isPcChanged,
     output           pcSrc, 
     output reg       regWrite, 
     output reg       aluSrc,
-    output reg       wdSrc,
-    output reg [2:0] aluControl
+    output reg [1:0] wdSrc,
+    output reg [2:0] aluControl,
+    output reg       func_start
 );
     reg          branch;
     reg          condZero;
-    assign pcSrc = branch & (aluZero == condZero);
+    reg          condGte;
+    reg          isCondZero;
+    assign pcSrc = branch & (isCondZero ? condZero == aluZero : condGte != aluCarry);
 
     always @ (*) begin
         branch      = 1'b0;
         condZero    = 1'b0;
+        condGte     = 1'b0;
+        isCondZero  = 1'b0;
         regWrite    = 1'b0;
         aluSrc      = 1'b0;
-        wdSrc       = 1'b0;
+        wdSrc       = `WD_ALU;
         aluControl  = `ALU_ADD;
+        func_start  = 1'b0;
 
         casez( {cmdF7, cmdF3, cmdOp} )
             { `RVF7_ADD,  `RVF3_ADD,  `RVOP_ADD  } : begin regWrite = 1'b1; aluControl = `ALU_ADD;  end
@@ -189,12 +231,17 @@ module sr_control
             { `RVF7_SUB,  `RVF3_SUB,  `RVOP_SUB  } : begin regWrite = 1'b1; aluControl = `ALU_SUB;  end
 
             { `RVF7_ANY,  `RVF3_ADDI, `RVOP_ADDI } : begin regWrite = 1'b1; aluSrc = 1'b1; aluControl = `ALU_ADD; end
-            { `RVF7_ANY,  `RVF3_ANY,  `RVOP_LUI  } : begin regWrite = 1'b1; wdSrc  = 1'b1; end
+            { `RVF7_ANY,  `RVF3_ANY,  `RVOP_LUI  } : begin regWrite = 1'b1; wdSrc  = `WD_IMMU; end
 
-            { `RVF7_ANY,  `RVF3_BEQ,  `RVOP_BEQ  } : begin branch = 1'b1; condZero = 1'b1; aluControl = `ALU_SUB; end
-            { `RVF7_ANY,  `RVF3_BNE,  `RVOP_BNE  } : begin branch = 1'b1; aluControl = `ALU_SUB; end
+            { `RVF7_ANY,  `RVF3_BEQ,  `RVOP_BEQ  } : begin branch = 1'b1; condZero = 1'b1; aluControl = `ALU_SUB; 
+                isCondZero = 1'b1; end
+            { `RVF7_ANY,  `RVF3_BNE,  `RVOP_BNE  } : begin branch = 1'b1; aluControl = `ALU_SUB; isCondZero = 1'b1; end
+            { `RVF7_ANY,  `RVF3_BGEU, `RVOP_BGEU } : begin branch = 1'b1; aluControl = `ALU_SUB; isCondZero = 1'b0;
+                condGte = 1'b1; end
+            { `RVF7_CUST, `RVF3_CUST, `RVOP_CUST } : begin func_start = isPcChanged; regWrite = 1'b1; wdSrc = `WD_FUNC; end
         endcase
     end
+    
 endmodule
 
 module sr_alu
@@ -203,16 +250,17 @@ module sr_alu
     input  [31:0] srcB,
     input  [ 2:0] oper,
     output        zero,
+    output reg    carry,
     output reg [31:0] result
 );
     always @ (*) begin
         case (oper)
-            default   : result = srcA + srcB;
-            `ALU_ADD  : result = srcA + srcB;
-            `ALU_OR   : result = srcA | srcB;
-            `ALU_SRL  : result = srcA >> srcB [4:0];
-            `ALU_SLTU : result = (srcA < srcB) ? 1 : 0;
-            `ALU_SUB : result = srcA - srcB;
+            default   : {carry, result} = srcA + srcB;
+            `ALU_ADD  : {carry, result} = srcA + srcB;
+            `ALU_OR   : {carry, result} = srcA | srcB;
+            `ALU_SRL  : {carry, result} = srcA >> srcB [4:0];
+            `ALU_SLTU : {carry, result} = (srcA < srcB) ? 1 : 0;
+            `ALU_SUB  : {carry, result} = srcA - srcB;
         endcase
     end
 

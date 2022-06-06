@@ -25,16 +25,20 @@
 `define RVOP_SRL    7'b0110011
 `define RVOP_SLTU   7'b0110011
 `define RVOP_SUB    7'b0110011
+`define RVOP_BGEU   7'b1100011
+`define RVOP_CUST   7'b0110011
 
 // instruction funct3
 `define RVF3_ADDI   3'b000
 `define RVF3_BEQ    3'b000
 `define RVF3_BNE    3'b001
+`define RVF3_BGEU   3'b111
 `define RVF3_ADD    3'b000
 `define RVF3_OR     3'b110
 `define RVF3_SRL    3'b101
 `define RVF3_SLTU   3'b011
 `define RVF3_SUB    3'b000
+`define RVF3_CUST   3'b100
 `define RVF3_ANY    3'b???
 
 // instruction funct7
@@ -43,5 +47,6 @@
 `define RVF7_SRL    7'b0000000
 `define RVF7_SLTU   7'b0000000
 `define RVF7_SUB    7'b0100000
+`define RVF7_CUST   7'b0000000
 `define RVF7_ANY    7'b???????
 
