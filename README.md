@@ -17,9 +17,9 @@ Tiny RISCV CPU. Originally based on Sarah L. Harris MIPS CPU ("Digital Design an
 [RISC-V ISA Specification](https://raw.githubusercontent.com/wiki/zhelnio/schoolRISCV/doc/riscv-spec-20191213.pdf)
 
 ## Added Commands
-- __BGEU__ - branch if greater or equal - 1 cycle
+- __BGEU__ - branch if greater or equal unsigned - 1 cycle
 - __func__ - $a^2 + \sqrt[3]{b}$ - 89 cycles
 
 ![Changes in schematics](schematics.png)
-func is implemented as external module  
+func is implemented as an external module  
 [func source code](https://github.com/SuperJaremy/schematics-2)
